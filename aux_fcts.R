@@ -62,7 +62,7 @@ regs_by_controls = function(depvar,indeps,ctrls,regdat,type='text',
                             print.out=T,
                             spec.no.ctrls = T,cum.ctrls = F,
                             col.with.all=c(T,T),method ='lm',fespec='|0|0|0',
-                            title='',label='',font.size='normalsize',
+                            title='',label='',font.size='normalsize',mySEs=NULL,
                             dep.var.labels.include=F,dep.var.caption='',table.placement='H'){
      # dat            : data to run on
      # main_dep       : name of dependent variable
@@ -70,6 +70,7 @@ regs_by_controls = function(depvar,indeps,ctrls,regdat,type='text',
      # ctrls          : name(s) of one or more control variables, included one by one or cumulatively.
      # col.with.all   : logical vector, 1st position: incl column with all control variables? 2nd: print it?
      # cum.ctrls      : logical, shall controls be included one by one or cumulative?
+     # mySEs          : function specifying the SEs, input: model-object, output: vector with scalar values of standard errors
      regs=list()
      st = ifelse(isTRUE(spec.no.ctrls),0,1)
      for (jj in st:length(ctrls)){
@@ -91,25 +92,28 @@ regs_by_controls = function(depvar,indeps,ctrls,regdat,type='text',
           regs[[paste0(jj+1)]] = lm(as.formula(paste0(depvar,'~',paste0(indeps,collapse = '+'),' + ',paste0(ctrls,collapse = '+'))),data=regdat) 
      }
      if (isFALSE(print.out)){suppressWarnings(sink(''))}
+     # define standard errors if not specified:
+     if (is.null(mySEs)){ mySEs = function(x) coeftest(x,vcov=NeweyWest(x,prewhite = F,adjust=F,lag = 4))[,2]}
      t = stargazer(regs,type=type,
                    model.numbers = F,dep.var.labels.include = dep.var.labels.include,dep.var.caption = dep.var.caption,omit=myomit,
                    table.placement = table.placement,title = title,label = label,font.size = font.size,
                    #se=lapply(regs,function(x) coeftest(x,vcov=vcovHAC(x))[,2]),
-                   se=lapply(regs,function(x) coeftest(x,vcov=NeweyWest(x,prewhite = F,lag = 4))[,2]),
+                   se=lapply(regs,mySEs),
                    omit.stat=c("LL","ser","f",'adj.rsq'))
      if (isFALSE(print.out)){sink()}
      return(t)
 }
 regs_by_cntrls_by_smpl = function(mydepvar,my_key.indep.var,myindeps,myctrls,mydat,mytype='text',
-                                  smpl.dim,smpls,
+                                  smpl.dim,smpls,mySEs=NULL,
                                   my.spec.no.ctrls = T,spec.all.ctrls=T,cum.ctrls = F,stats = c('N','Rsq'),
                                   my.print.out=F,mytitle='',my_tabnote='',notewidth=0.975,
                                   dep.var.caption='',font.size='normalsize',label='',table.placement='H',path=NULL,
+                                  tabnote.fontsize = 'footnotesize',scalebox=NULL,
                                   smpl.dim.label ='Sample',
                                   cntrl.dim.label ='Add-control'){
      # smpl.dim : string, name of variable that is dimension for subsampling
      # smpls    : string vector indicating different sub-samples, each element in smpls is a value of smpl.dim.
-     
+     # scalebox : numeric scaling factor if want to have final table wrapped into scalebox.
      if (grepl('text',mytype)){
           tabs=data.table(stringsAsFactors = F)
      } else if (grepl('latex',mytype)){
@@ -118,13 +122,14 @@ regs_by_cntrls_by_smpl = function(mydepvar,my_key.indep.var,myindeps,myctrls,myd
      if (is.null(names(smpls))){names(smpls)=smpls}
      if (is.null(names(myctrls))){names(myctrls)=myctrls}
      
+     # estimate specifications for different sub-samples, collect model-objects in list.
      for (i in 1:length(smpls)){
           cur.smpl = smpls[i]
           datc = mydat[ get(smpl.dim) %in% cur.smpl ]
           t = regs_by_controls(depvar = mydepvar,indeps=myindeps,ctrls=myctrls,type=mytype,
                                regdat=datc,
                                col.with.all=c(spec.all.ctrls,F),spec.no.ctrls = my.spec.no.ctrls,
-                               title=mytitle,label=label,font.size = font.size,
+                               title=mytitle,label=label,font.size = font.size,mySEs = mySEs,
                                cum.ctrls = cum.ctrls,print.out = my.print.out,
                                dep.var.labels.include=F,dep.var.caption=dep.var.caption,table.placement)
           #rm(datc)
@@ -161,6 +166,9 @@ regs_by_cntrls_by_smpl = function(mydepvar,my_key.indep.var,myindeps,myctrls,myd
           st0  = grep('\\begin{table}',t,fixed = T)
           if (dep.var.caption%in%''){st1  = grep('\\begin{tabular}',t,fixed = T)+2} else (st1  = grep('\\cline',t,fixed = T))
           stt = t[st0:(st1)]
+          # insert scalebox:
+          if (!is.null(scalebox)){stt = c(stt[1:(grep('\\begin{tabular}',stt,fixed=T)-1)],paste0('\\scalebox{',scalebox,'}{'),stt[grep('\\begin{tabular}',stt,fixed=T):length(stt)])}
+          # adjust column-specification for tabular-environment:
           stt[grep('\\begin{tabular}',stt,fixed=T)] = gsub('lc+',paste0(c('l',rep('c',(NoCols-1))),collapse = ''),stt[grep('\\begin{tabular}',stt,fixed=T)])
           if (!dep.var.caption%in%''){ 
                ix = grep('multicolumn',stt)
@@ -169,7 +177,7 @@ regs_by_cntrls_by_smpl = function(mydepvar,my_key.indep.var,myindeps,myctrls,myd
                stt[ix+1] = paste0(stt[ix+1],'\\\\[-1.8ex]') 
           }         
           # Table Ending:
-          ed = c('\\end{tabular}',c(paste0('\\begin{minipage}{',notewidth,'\\textwidth}'),my_tabnote,'\\end{minipage}', '\\end{table}'))
+          ed = c('\\end{tabular}',ifelse(!is.null(scalebox),'}',''),c(paste0('\\begin{minipage}{',notewidth,'\\textwidth}\\',tabnote.fontsize),my_tabnote,'\\end{minipage}', '\\end{table}'))
           tex.tab = c(stt,tabs,lstrdt,ed)
           tex.tab = tex.tab[!tex.tab%in%'']
           if (!is.null(path)){
@@ -180,13 +188,23 @@ regs_by_cntrls_by_smpl = function(mydepvar,my_key.indep.var,myindeps,myctrls,myd
           return(tex.tab)
      }
 }
-prep_table = function(my_stargazer,my_tabnote='',my_varlabels='',path,scale_notewidth=0.8){
-     myn = names(my_varlabels) %>% gsub('_','\\_',.,fixed=T)
+prep_table = function(my_stargazer,my_tabnote='',my_varlabels='',repl.caption = F,ignore.tabnote=F,path,scale_notewidth=0.95,tbn.font.size='footnotesize'){
+     # my_stargazer = stargazer object to be finalized.
+     # my_varlabels = named character vector, with variable name and corresponding label to be used in table.
+     # repl.caption = default is logical FALSE, may be replaced with string for title. work-around for stargazer bug occurring with argument "keep".
+     if (!sum(grepl('\\begin',my_stargazer,fixed = T))>0){stop('Table must be latex table.')}
+     myn = names(my_varlabels) %>% gsub('_','\\_',.,fixed=T) #%>% gsub('.','.',.,fixed=T)
      for (i in 1:length(myn)){my_stargazer[grep(myn[i],my_stargazer,fixed=T)] = gsub(myn[i],my_varlabels[i],my_stargazer[grep(myn[i],my_stargazer,fixed=T)],fixed=T) }
      my_stargazer[(grep('Note',my_stargazer)-1)] = ''
      my_stargazer[grep('Note',my_stargazer)] = ''
-     my_stargazer[grep('end\\{table\\}',my_stargazer)] = ''
-     my_stargazer = c(my_stargazer,c('\\begin{minipage}{',scale_notewidth,'\\textwidth}',my_tabnote,'\\end{minipage}', '\\end{table}'))
+     if (repl.caption!=F){
+          my_stargazer[grep('\\caption',my_stargazer,fixed=T)] = paste0('\\caption{',repl.caption,'}')
+     }
+     if (ignore.tabnote==F){
+          my_stargazer[grep('end\\{table\\}',my_stargazer)] = ''
+          my_stargazer = c(my_stargazer,'\\vspace{0.15cm}',c(paste0('\\begin{minipage}{',scale_notewidth,'\\textwidth}\\',tbn.font.size),my_tabnote,'\\end{minipage}', '\\end{table}'))
+     }
+     my_stargazer = my_stargazer[!my_stargazer%in%'']
      sink(file = path)
      cat(my_stargazer, sep = "\n")        
      sink()
